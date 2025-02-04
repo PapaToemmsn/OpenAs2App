@@ -1,21 +1,18 @@
 package org.openas2;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
 
 
 public class OpenAS2Exception extends Exception {
+    private static final long serialVersionUID = -2266872772193560354L;
     public static final String SOURCE_MESSAGE = "message";
     public static final String SOURCE_FILE = "file";
-    /**
-     *
-     */
-    private static final long serialVersionUID = 1L;
     private Map<String, Object> sources = new HashMap<String, Object>();
-    private Log logger = LogFactory.getLog(OpenAS2Exception.class.getSimpleName());
+    private Logger logger = LoggerFactory.getLogger(OpenAS2Exception.class);
 
     public OpenAS2Exception() {
         super();
@@ -46,6 +43,6 @@ public class OpenAS2Exception extends Exception {
     }
 
     public void log() {
-        logger.error("Error occurred:: " + org.openas2.logging.Log.getExceptionMsg(this) + "\n    Sources: " + this.getSources(), this);
+        logger.error("Error occurred:: " + org.openas2.util.Logging.getExceptionMsg(this) + "\n    Sources: " + this.getSources(), this);
     }
 }

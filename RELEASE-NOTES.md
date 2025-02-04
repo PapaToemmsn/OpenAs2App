@@ -1,22 +1,34 @@
 #              OpenAS2 Server
-#              Version 3.10.0
+#              Version 4.1.0
 #              RELEASE NOTES
 -----
-The OpenAS2 project is pleased to announce the release of OpenAS2 3.10.0
+The OpenAS2 project is pleased to announce the release of OpenAS2 4.1.0
 
-The release download file is: OpenAS2Server-3.10.0.zip
+The release download file is: OpenAS2Server-4.1.0.zip
 
 The zip file contains a PDF document (OpenAS2HowTo.pdf) providing information on installing and using the application.
-## NOTE: Testing covers Java 8 to 17. The application should work for older versions down to Java 7 but they are not tested as part of the CI/CD pipeline.
+## NOTE: Testing covers Java 11 to 21.
+##       Java 8 is NO LONGER SUPPORTED.
 
-Version 3.10.0 - 2024-03-17
-This is an enhancement release:
+Version 4.1.0 - 2024-12-04
+
+This is an enhancement release.
        **IMPORTANT NOTE**: Please review upgrade notes below if you are upgrading
 
- 1. Support Elliptic Curve algorithm.
+1. Support for Elliptic curve certificates.
+2. Enhanced support for using SSL with self signed certificates
+3. Support PKCS12 certificate keystore for SSL certificates.
+4. Significantly updated the OpenAS2HowTo documentation.
 
 ##Upgrade Notes
  See the openAS2HowTo appendix for the general process on upgrading OpenAS2.
+
+### Upgrading to 4.0 or newer from any older version:
+      1. Ensure you implement all logging that you had configured for ealrier versions using the logback configuration or replace with another framework that works with SLF4J facade. See the OpenAS2HowTo.pdf logging section for more details.
+      2. The property for email configuration in the config.xml changed:
+          Change ALL occurrences of javax.mail.properties to jakarta.mail.properties in config.xml and the .properties file if you implemented it.
+      3. If using an external database for message state tracking, make sure that your configuration will work with the new Hikari JDBC pool that improves performance. See the OpenAS2HowTo.pdf message state tracking section for more details.
+      4. Completely replace all library files in the existing "lib" folder wit hthe ones supplied in the new install package (per recommended standard procedure in the user guide).
 
 ### Upgrading to 3.6 or newer from 3.5 (or older) version:
       1. Run the following command after the upgrade of the code base is complete and BEFORE you start the OpenAS2 server:

@@ -1,11 +1,12 @@
 package org.openas2.processor.receiver;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.openas2.OpenAS2Exception;
 import org.openas2.Session;
 import org.openas2.message.Message;
 import org.openas2.params.InvalidParameterException;
+import org.openas2.processor.Processor;
 import org.openas2.util.IOUtil;
 
 import java.io.File;
@@ -18,8 +19,9 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 public abstract class DirectoryPollingModule extends PollingModule {
     public static final String PARAM_OUTBOX_DIRECTORY = "outboxdir";
@@ -41,7 +43,7 @@ public abstract class DirectoryPollingModule extends PollingModule {
     private List<String> excludeExtensions;
     private String excludeFilenameRegexFilter = null;
 
-    private Log logger = LogFactory.getLog(DirectoryPollingModule.class.getSimpleName());
+    private Logger logger = LoggerFactory.getLogger(DirectoryPollingModule.class);
 
     public void init(Session session, Map<String, String> options) throws OpenAS2Exception {
         super.init(session, options);
@@ -63,9 +65,9 @@ public abstract class DirectoryPollingModule extends PollingModule {
                 executorService = Executors.newFixedThreadPool(maxProcessingThreads);
             }
             
-            String pendingInfoFolder = getSession().getProcessor().getParameters().get("pendingmdninfo");
+            String pendingInfoFolder = getSession().getProcessor().getParameters().get(Processor.PENDING_MDN_INFO_DIRECTORY_IDENTIFIER);
             IOUtil.getDirectoryFile(pendingInfoFolder);
-            String pendingFolder = getSession().getProcessor().getParameters().get("pendingmdn");
+            String pendingFolder = getSession().getProcessor().getParameters().get(Processor.PENDING_MDN_MSG_DIRECTORY_IDENTIFIER);
             IOUtil.getDirectoryFile(pendingFolder);
             
             
@@ -98,10 +100,10 @@ public abstract class DirectoryPollingModule extends PollingModule {
             IOUtil.getDirectoryFile(getOutboxDir());
         } catch (IOException e) {
             failures.add(this.getClass().getSimpleName() + " - Polling directory is not accessible: " + getOutboxDir());
-            Logger.getLogger(DirectoryPollingModule.class.getName()).log(Level.SEVERE, null, e);
+            LoggerFactory.getLogger(DirectoryPollingModule.class.getName()).error(null, e);
             return false;
         } catch (InvalidParameterException ex) {
-            Logger.getLogger(DirectoryPollingModule.class.getName()).log(Level.SEVERE, null, ex);
+            LoggerFactory.getLogger(DirectoryPollingModule.class.getName()).error(null, ex);
             return false;
         }
         return true;

@@ -1,7 +1,7 @@
 package org.openas2.processor.resender;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.openas2.OpenAS2Exception;
 import org.openas2.Session;
 import org.openas2.WrappedException;
@@ -26,8 +26,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class DirectoryResenderModule extends BaseResenderModule {
@@ -40,19 +40,19 @@ public class DirectoryResenderModule extends BaseResenderModule {
     // TODO Resend set to 15 minutes. Implement a scaling resend time with eventual permanent failure of transmission
     public static final long DEFAULT_RESEND_DELAY = 15 * 60 * 1000; // 15 minutes
 
-    private Log logger = LogFactory.getLog(DirectoryResenderModule.class.getSimpleName());
+    private Logger logger = LoggerFactory.getLogger(DirectoryResenderModule.class);
 
 
     /** TODO: Remove this when module config enforces setting the action so that the super method does all the work
     *
     */
-   public String getModuleAction() {
-       String action = super.getModuleAction();
-       if (action == null) {
-           return ResenderModule.DO_RESEND;
-       }
-       return action;
-   }
+    public String getModuleAction() {
+        String action = super.getModuleAction();
+        if (action == null) {
+            return ResenderModule.DO_RESEND;
+        }
+        return action;
+    }
 
     public void handle(String action, Message msg, Map<String, Object> options) throws OpenAS2Exception {
         ObjectOutputStream oos = null;
@@ -67,12 +67,21 @@ public class DirectoryResenderModule extends BaseResenderModule {
             int retries = Integer.parseInt((String)options.get(ResenderModule.OPTION_RETRIES));
             oos.writeObject(method);
             oos.writeObject("" + retries);
+            // Set the resend flag to avoid unwanted processing of the message by the builder module
+            msg.setIsResend(true);
             oos.writeObject(msg);
 
             logger.info("Message put in resend queue" + msg.getLogMsgID());
             if (logger.isTraceEnabled()) {
                 try {
-                    logger.trace("Message object in resender module for storage. Content-Disposition: " + msg.getContentDisposition() + "\n      Content-Type : " + msg.getContentType() + "\n      Retries : " + retries + "\n      HEADERS : " + AS2Util.printHeaders(msg.getData().getAllHeaders()) + "\n      Content-Disposition in MSG getData() MIMEPART: " + msg.getData().getContentType() + "\n        Attributes: " + msg.getAttributes() + msg.getLogMsgID());
+                    logger.trace("Message object in resender module for storage. Content-Disposition: " +
+                        msg.getContentDisposition() +
+                        "\n      Content-Type : " + msg.getContentType() +
+                        "\n      Retries : " + retries +
+                        "\n      HEADERS : " + AS2Util.printHeaders(msg.getData().getAllHeaders()) +
+                        "\n      Content-Disposition in MSG getData() MIMEPART: " + msg.getData().getContentType() +
+                        "\n      Attributes: " + msg.getAttributes() + msg.getLogMsgID()
+                    );
                 } catch (Exception e) {
                 }
             }
@@ -125,7 +134,7 @@ public class DirectoryResenderModule extends BaseResenderModule {
             failures.add(this.getClass().getSimpleName() + " - Polling directory is not accessible: " + resendDirPath);
             return false;
         } catch (InvalidParameterException ex) {
-            Logger.getLogger(DirectoryResenderModule.class.getName()).log(Level.SEVERE, null, ex);
+            LoggerFactory.getLogger(DirectoryResenderModule.class.getName()).error(null, ex);
             return false;
         }
         return true;
@@ -174,11 +183,15 @@ public class DirectoryResenderModule extends BaseResenderModule {
 
                 // Transmit the message
                 if (logger.isInfoEnabled()) {
-                    logger.info("loaded message for resend." + msg.getLogMsgID());
+                    logger.info("Loaded message for resend: " + file.getAbsolutePath() + msg.getLogMsgID());
                 }
                 if (logger.isTraceEnabled()) {
                     try {
-                        logger.trace("Reconstituted Message object in resender. Content-Disposition: " + msg.getContentDisposition() + "\n      Content-Type : " + msg.getContentType() + "\n      HEADERS : " + AS2Util.printHeaders(msg.getData().getAllHeaders()) + "\n      Content-Disposition in MSG getData() MIMEPART: " + msg.getData().getContentType() + "\n      ATTRIBUTES : " + msg.getAttributes() + msg.getLogMsgID());
+                        logger.trace("Reconstituted Message object in resender. Content-Disposition: " + msg.getContentDisposition()
+                            + "\n      Content-Type : " + msg.getContentType()
+                            + "\n      HEADERS : " + AS2Util.printHeaders(msg.getData().getAllHeaders())
+                            + "\n      Content-Disposition in MSG getData() MIMEPART: " + msg.getData().getContentType()
+                            + "\n      ATTRIBUTES : " + msg.getAttributes() + msg.getLogMsgID());
                     } catch (Exception e) {
                     }
                 }

@@ -1,8 +1,8 @@
 package org.openas2.processor.receiver;
 
 import org.apache.commons.lang3.ClassUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.openas2.OpenAS2Exception;
 import org.openas2.Session;
 import org.openas2.WrappedException;
@@ -17,7 +17,7 @@ import org.openas2.util.IOUtil;
 import org.openas2.util.Properties;
 import org.openas2.util.ResponseWrapper;
 
-import javax.annotation.Nullable;
+import jakarta.annotation.Nullable;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLServerSocketFactory;
@@ -57,7 +57,7 @@ public abstract class NetModule extends BaseReceiverModule {
     public static final String DEFAULT_ERRORS = "$date.yyyyMMddhhmmss$";
 
     private HTTPServerThread mainThread;
-    private Log logger = LogFactory.getLog(NetModule.class.getSimpleName());
+    private Logger logger = LoggerFactory.getLogger(NetModule.class);
 
     public void doStart() throws OpenAS2Exception {
         try {
@@ -102,7 +102,7 @@ public abstract class NetModule extends BaseReceiverModule {
             if (logger.isTraceEnabled()) {
                 logger.trace("Helthcheck about to try URL: " + urlString);
             }
-            Map<String, String> options = new HashMap<String, String>();
+            Map<String, Object> options = new HashMap<String, Object>();
             options.put(HTTPUtil.HTTP_PROP_OVERRIDE_SSL_CHECKS, "true");
             ResponseWrapper rw = HTTPUtil.execRequest(HTTPUtil.Method.GET, urlString, null, null, null, options, 0L, false);
             if (200 != rw.getStatusCode()) {
@@ -209,18 +209,20 @@ public abstract class NetModule extends BaseReceiverModule {
                     ksPass = owner.getParameter(PARAM_SSL_KEYSTORE_PASSWORD, true).toCharArray();
                 } catch (InvalidParameterException e) {
                     logger.error("Required SSL parameter missing.", e);
-                    throw new IOException("Failed to retireve require SSL parameters. Check config XML");
+                    throw new IOException("Failed to retrieve required SSL parameters. Check config XML");
                 }
+                // Support either JKS or PKCS12 keystores with default being JKS (for now)
+                String keyStoreType = (ksName.endsWith(".p12")?"PKCS12":"JKS");
                 KeyStore ks;
                 try {
-                    ks = KeyStore.getInstance("JKS");
+                    ks = KeyStore.getInstance(keyStoreType);
                 } catch (KeyStoreException e) {
                     logger.error("Failed to initialise SSL keystore.", e);
                     throw new IOException("Error initialising SSL keystore");
                 }
-                try {
-                    ks.load(new FileInputStream(ksName), ksPass);
-                } catch (NoSuchAlgorithmException e) {
+                try (FileInputStream fis =  new FileInputStream(ksName)) {
+                    ks.load(fis, ksPass);
+                } catch (NoSuchAlgorithmException | IOException e) {
                     logger.error("Failed to load keystore: " + ksName, e);
                     throw new IOException("Error loading SSL keystore");
                 } catch (CertificateException e) {
@@ -229,7 +231,7 @@ public abstract class NetModule extends BaseReceiverModule {
                 }
                 KeyManagerFactory kmf;
                 try {
-                    kmf = KeyManagerFactory.getInstance("SunX509");
+                    kmf = KeyManagerFactory.getInstance("PKIX");
                 } catch (NoSuchAlgorithmException e) {
                     logger.error("Failed to create key manager instance", e);
                     throw new IOException("Error creating SSL key manager instance");
@@ -243,7 +245,7 @@ public abstract class NetModule extends BaseReceiverModule {
                 // setup the trust manager factory
                 TrustManagerFactory tmf;
                 try {
-                    tmf = TrustManagerFactory.getInstance("SunX509");
+                    tmf = TrustManagerFactory.getInstance("PKIX");
                     tmf.init(ks);
                 } catch (Exception e1) {
                     logger.error("Failed to create trust manager instance", e1);

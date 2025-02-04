@@ -2,7 +2,7 @@ package org.openas2.app;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.PrefixFileFilter;
-import org.apache.commons.lang.RandomStringUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -55,8 +55,7 @@ public class OpenAS2ServerTest {
     @BeforeAll
     public static void startServers() throws Exception {
         tmp = Files.createTempDirectory("testResources").toFile();
-        //System.setProperty("org.openas2.logging.defaultlog", "TRACE");
-        System.setProperty("org.apache.commons.logging.Log", "org.openas2.logging.Log");
+        //System.setProperty("OPENAS2_LOG_LEVEL", "TRACE");
         try {
             serverA = new OpenAS2Server.Builder().run(RESOURCE.get("OpenAS2A", "config", "config.xml").getAbsolutePath());
             // Get the data folder from Properties before starting the other server as it overwrites the Properties
@@ -144,8 +143,8 @@ public class OpenAS2ServerTest {
     }
 
     private TestMessage sendMessage(TestPartner fromPartner, TestPartner toPartner) throws IOException {
-        String outgoingMsgFileName = RandomStringUtils.randomAlphanumeric(10) + ".txt";
-        String outgoingMsgBody = RandomStringUtils.randomAlphanumeric(1024);
+        String outgoingMsgFileName = RandomStringUtils.secure().nextAlphanumeric(10) + ".txt";
+        String outgoingMsgBody = RandomStringUtils.secure().nextAlphanumeric(1024);
         File outgoingMsg = Files.createFile(Paths.get(tmp.toString(), outgoingMsgFileName)).toFile();
         FileUtils.write(outgoingMsg, outgoingMsgBody, "UTF-8");
         System.out.println("Copying a file to send to:" + fromPartner.getOutbox());

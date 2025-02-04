@@ -8,14 +8,15 @@ import org.openas2.cmd.Command;
 import org.openas2.cmd.CommandRegistry;
 import org.openas2.schedule.HasSchedule;
 
-import javax.annotation.Nullable;
+import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 
 public abstract class BaseCommandProcessor implements CommandProcessor, Component, HasSchedule {
@@ -94,7 +95,7 @@ public abstract class BaseCommandProcessor implements CommandProcessor, Componen
                     try {
                         processCommand();
                     } catch (Exception ex) {
-                        Logger.getLogger(BaseCommandProcessor.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                        LoggerFactory.getLogger(BaseCommandProcessor.class.getName()).error(ex.getMessage(), ex);
                     }
                 }
                 return VOID;

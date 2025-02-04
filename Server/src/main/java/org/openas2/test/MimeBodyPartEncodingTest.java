@@ -1,6 +1,5 @@
 package org.openas2.test;
 
-import org.apache.commons.logging.LogFactory;
 import org.openas2.Session;
 import org.openas2.XMLSession;
 import org.openas2.cert.CertificateFactory;
@@ -14,9 +13,9 @@ import org.openas2.partner.Partnership;
 import org.openas2.util.AS2Util;
 import org.openas2.util.ByteArrayDataSource;
 
-import javax.activation.DataHandler;
-import javax.mail.MessagingException;
-import javax.mail.internet.MimeBodyPart;
+import jakarta.activation.DataHandler;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeBodyPart;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -39,9 +38,6 @@ public class MimeBodyPartEncodingTest {
     public static void main(String[] args) {
         XMLSession session = null;
         int exitStatus = 0;
-        System.setProperty("org.apache.commons.logging.Log", "org.openas2.logging.Log");
-        //System.setProperty("openas2log.properties", "Server/bin/openas2log.properties");
-        LogFactory.getFactory().setAttribute("level", "TRACE");
         System.out.println("Current working directory: " + System.getProperty("user.dir") + System.getProperty("line.separator"));
         System.out.println("Logging prop: " + System.getProperty("org.apache.commons.logging.Log") + System.getProperty("line.separator"));
         File f = new File(TestConfig.TEST_OUTPUT_FOLDER);
@@ -109,7 +105,7 @@ public class MimeBodyPartEncodingTest {
             session.getPartnershipFactory().updatePartnership(msg, true);
             msg.updateMessageID();
 
-            CertificateFactory certFx = session.getCertificateFactory();
+            CertificateFactory certFx = session.getCertificateFactory(CertificateFactory.COMPID_AS2_CERTIFICATE_FACTORY);
             String x509_alias = msg.getPartnership().getAlias(Partnership.PTYPE_SENDER);
             X509Certificate senderCert = certFx.getCertificate(x509_alias);
 

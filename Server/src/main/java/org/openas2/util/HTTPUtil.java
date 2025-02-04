@@ -1,8 +1,8 @@
 package org.openas2.util;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.http.HttpHost;
 import org.apache.http.NameValuePair;
 import org.apache.http.auth.AuthScope;
@@ -31,19 +31,23 @@ import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.protocol.HTTP;
 import org.apache.http.ssl.SSLContexts;
 import org.openas2.OpenAS2Exception;
-import org.openas2.WrappedException;
 import org.openas2.message.Message;
+import org.openas2.processor.sender.HttpSenderModule;
 
-import javax.mail.Header;
-import javax.mail.MessagingException;
-import javax.mail.internet.InternetHeaders;
+import jakarta.mail.Header;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.InternetHeaders;
 import javax.net.ssl.*;
 import java.io.*;
 import java.net.*;
 import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
@@ -66,6 +70,13 @@ public class HTTPUtil {
     public static final String HEADER_CONTENT_TYPE = "Content-Type";
     public static final String HEADER_USER_AGENT = "User-Agent";
     public static final String HEADER_CONNECTION = "Connection";
+
+    public static final String SSL_KEYSTORE_PATH_ENV = "SSL_KEYSTORE_PATH";
+    public static final String SSL_KEYSTORE_PASSWORD_ENV = "SSL_KEYSTORE_PASSWORD";
+    private static Set<String> cachedFingerprints = ConcurrentHashMap.newKeySet();
+    private static KeyStore cachedJavaKeyStore = null;
+
+    private static final Logger LOG = LoggerFactory.getLogger(HTTPUtil.class);
 
     public abstract static class Method {
         public static final String GET = "GET";
@@ -131,7 +142,7 @@ public class HTTPUtil {
 
     public static byte[] readHTTP(InputStream inStream, OutputStream outStream, InternetHeaders headerCache, List<String> httpRequest) throws IOException, MessagingException {
         byte[] data = null;
-        Log logger = LogFactory.getLog(HTTPUtil.class.getSimpleName());
+        Logger logger = LoggerFactory.getLogger(HTTPUtil.class);
 
         // Get the stream and read in the HTTP request and headers
         BufferedInputStream in = new BufferedInputStream(inStream);
@@ -233,7 +244,7 @@ public class HTTPUtil {
             } else {
                 HTTPUtil.sendHTTPResponse(outStream, HttpURLConnection.HTTP_LENGTH_REQUIRED, null);
                 if ("true".equals(Properties.getProperty(Properties.LOG_INVALID_HTTP_REQUEST, "true"))) {
-                  Log logger = LogFactory.getLog(HTTPUtil.class.getSimpleName());
+                  Logger logger = LoggerFactory.getLogger(HTTPUtil.class);
                   logger.warn("The request either contained no data or has issues with the Transfer-Encoding or Content-Length: : " + request.get(0) + " " + request.get(1) + "\n\tHeaders: " + printHeaders(msg.getHeaders().getAllHeaders(), "==", ";;"));
                 }
                 return null;
@@ -311,7 +322,15 @@ public class HTTPUtil {
      * @return ResponseWrapper
      * @throws Exception
      */
-    public static ResponseWrapper execRequest(String method, String url, InternetHeaders headers, NameValuePair[] params, InputStream inputStream, Map<String, String> options, long noChunkMaxSize, boolean preventChunking) throws Exception {
+    public static ResponseWrapper execRequest(
+            String method,
+            String url,
+            InternetHeaders headers,
+            NameValuePair[] params,
+            InputStream inputStream,
+            Map<String, Object> options,
+            long noChunkMaxSize,
+            boolean preventChunking) throws Exception {
 
         HttpClientBuilder httpBuilder = HttpClientBuilder.create();
         //org.apache.http.protocol.RequestContent
@@ -326,7 +345,13 @@ public class HTTPUtil {
              * The custom SSLSocketFactory needs to be registered together with the connection manager.
              */
             SSLConnectionSocketFactory sslCsf = buildSslFactory(urlObj, options);
-            httpBuilder.setConnectionManager(new BasicHttpClientConnectionManager(RegistryBuilder.<ConnectionSocketFactory>create().register("http", PlainConnectionSocketFactory.getSocketFactory()).register("https", sslCsf).build()));
+            httpBuilder.setConnectionManager(
+                    new BasicHttpClientConnectionManager(
+                            RegistryBuilder.<ConnectionSocketFactory>create()
+                            .register("http", PlainConnectionSocketFactory.getSocketFactory())
+                            .register("https", sslCsf).build()
+                    )
+            );
         } else {
             httpBuilder.setConnectionManager(new BasicHttpClientConnectionManager());
         }
@@ -343,9 +368,9 @@ public class HTTPUtil {
         setProxyConfig(httpBuilder, rcBuilder, urlObj.getProtocol());
         rb.setConfig(rcBuilder.build());
 
-        String httpUser = options.get(HTTPUtil.PARAM_HTTP_USER);
-        String httpPwd = options.get(HTTPUtil.PARAM_HTTP_PWD);
+        String httpUser = (String) options.get(HTTPUtil.PARAM_HTTP_USER);
         if (httpUser != null) {
+            String httpPwd = (String) options.get(HTTPUtil.PARAM_HTTP_PWD);
             CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
             credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(httpUser, httpPwd));
             httpBuilder.setDefaultCredentialsProvider(credentialsProvider);
@@ -376,7 +401,7 @@ public class HTTPUtil {
                 rb.setEntity(httpEntity);
             }
         }
-            
+
         final HttpUriRequest request = rb.build();
 
         BasicHttpContext localcontext = new BasicHttpContext();
@@ -396,31 +421,44 @@ public class HTTPUtil {
         }
     }
 
-    private static SSLConnectionSocketFactory buildSslFactory(URL urlObj, Map<String, String> options) throws Exception {
-
-        boolean overrideSslChecks = "true".equalsIgnoreCase(options.get(HTTPUtil.HTTP_PROP_OVERRIDE_SSL_CHECKS));
-        SSLContext sslcontext;
+    private static SSLConnectionSocketFactory buildSslFactory(URL urlObj, Map<String, Object> options) throws Exception {
+        // Support various ways of doing the connection trusting
+        // There is a custom keystore to verify self signed certs against
+        boolean isExtendedSelfsignedTrustCheck = options.containsKey(HttpSenderModule.PARAM_CUSTOM_SSL_TRUST_STORE);
+        // this is only currently used by the Health check module
+        boolean overrideSslChecks = "true".equalsIgnoreCase((String) options.get(HTTPUtil.HTTP_PROP_OVERRIDE_SSL_CHECKS));
+        // The original method where hostnames to be trusted can be passed in a system property
         String selfSignedCN = System.getProperty("org.openas2.cert.TrustSelfSignedCN");
-        if ((selfSignedCN != null && selfSignedCN.contains(urlObj.getHost())) || overrideSslChecks) {
-            File file = getTrustedCertsKeystore();
-            KeyStore ks = null;
-            try (InputStream in = new FileInputStream(file)) {
-                ks = KeyStore.getInstance(KeyStore.getDefaultType());
-                ks.load(in, "changeit".toCharArray());
-            }
+        boolean isTrustSelfSignedCNHandling = (selfSignedCN != null && selfSignedCN.contains(urlObj.getHost()))?true:false;
+
+        LOG.warn("SSL factory building using:\n\tisExtendedSelfsignedTrustCheck: {}\n\toverrideSslChecks: {}\n\tisTrustSelfSignedCNHandling: {}", isExtendedSelfsignedTrustCheck, overrideSslChecks, isTrustSelfSignedCNHandling);
+        // Find a keystore to verify the self signed certs against if required
+        // Even if TrustSelfSignedCN is passed, use the custom keystore if it is defined
+        KeyStore selfsignedCertsKeystore = null;
+        if (isExtendedSelfsignedTrustCheck) {
+            selfsignedCertsKeystore = (KeyStore) options.get(HttpSenderModule.PARAM_CUSTOM_SSL_TRUST_STORE);
+        } else if (isTrustSelfSignedCNHandling) {
+            selfsignedCertsKeystore = getTrustedCertsKeystore();
+        }
+
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        SSLContext sslcontext;
+
+        if (selfsignedCertsKeystore != null) {
             try {
                 // Trust own CA and all self-signed certs
-                sslcontext = SSLContexts.custom().loadTrustMaterial(ks, new TrustSelfSignedStrategy()).build();
-                // Allow TLSv1 protocol only by default
+                sslcontext = SSLContexts.custom().loadTrustMaterial(selfsignedCertsKeystore, new TrustSelfSignedStrategy()).build();
+                LOG.debug("SSL context built using self signed trust store...");
             } catch (Exception e) {
-                throw new OpenAS2Exception("Self-signed certificate URL connection failed connecting to : " + urlObj.toString(), e);
+                throw new OpenAS2Exception("Attempted connection using self-signed manager failed connecting to : " + urlObj.toString(), e);
             }
         } else {
             sslcontext = SSLContexts.createSystemDefault();
         }
-        // String [] protocols = Properties.getProperty(HTTP_PROP_SSL_PROTOCOLS,
-        // "TLSv1").split("\\s*,\\s*");
-        HostnameVerifier hnv = SSLConnectionSocketFactory.getDefaultHostnameVerifier();
+        // For normal SSL operation a null KeyStore passed in defaults to the Java trust store
+        tmf.init(selfsignedCertsKeystore);
+        HostnameVerifier hnv = null;
+
         if (overrideSslChecks) {
             hnv = new HostnameVerifier() {
                 @Override
@@ -428,6 +466,40 @@ public class HTTPUtil {
                     return true;
                 }
             };
+        } else if(selfsignedCertsKeystore != null) {
+            SelfSignedTrustManager tm = new SelfSignedTrustManager((X509TrustManager) tmf.getTrustManagers()[0]);
+            if (isTrustSelfSignedCNHandling) {
+                tm.setTrustCN(selfSignedCN);
+            }
+            tm.setCustomSelfSignedHandling(isExtendedSelfsignedTrustCheck);
+            tm.setCustomTrustKeyStore(selfsignedCertsKeystore);
+            if(isExtendedSelfsignedTrustCheck) {
+                hnv = new HostnameVerifier() {
+                    @Override
+                    public boolean verify(String hostname, SSLSession session) {
+                        try {
+                            // Check if the certificate's fingerprint is cached or if it exists in the custom keystore
+                            X509Certificate[] certs = (X509Certificate[]) session.getPeerCertificates();
+                            String fingerprint = tm.getCertificateFingerprint(certs[0]);
+            
+                            if (cachedFingerprints.contains(fingerprint) || tm.isCertificateInCustomKeystore(certs[0], fingerprint)) {
+                                LOG.info("Hostname verification skipped for trusted certificate: " + certs[0].getSubjectX500Principal().getName());
+                                return true;
+                            }
+                        } catch (Exception e) {
+                            LOG.error("Hostname verification failed: " + e.getMessage(), e);
+                        }
+    
+                        // fallback to default hostname verifier
+                        return SSLConnectionSocketFactory.getDefaultHostnameVerifier().verify(hostname, session);
+                    }
+                };
+            }
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory
+                    .getDefaultAlgorithm());
+            kmf.init(selfsignedCertsKeystore, null);
+            // Now add the custom trust manager to the SSL context
+            sslcontext.init(kmf.getKeyManagers(), new TrustManager[]{tm}, null);
         }
         SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(sslcontext, null, null, hnv);
         return sslsf;
@@ -471,10 +543,10 @@ public class HTTPUtil {
         return req;
     }
 
-    private static RequestConfig.Builder buildRequestConfig(Map<String, String> options) {
+    private static RequestConfig.Builder buildRequestConfig(Map<String, Object> options) {
 
-        String connectTimeOutStr = options.get(PARAM_CONNECT_TIMEOUT);
-        String socketTimeOutStr = options.get(PARAM_SOCKET_TIMEOUT);
+        String connectTimeOutStr = (String) options.get(PARAM_CONNECT_TIMEOUT);
+        String socketTimeOutStr = (String) options.get(PARAM_SOCKET_TIMEOUT);
         RequestConfig.Builder rcBuilder = RequestConfig.custom();
         if (connectTimeOutStr != null) {
             rcBuilder.setConnectTimeout(Integer.parseInt(connectTimeOutStr));
@@ -570,7 +642,11 @@ public class HTTPUtil {
 
     }
 
-    public static File getTrustedCertsKeystore() throws OpenAS2Exception {
+    public static KeyStore getTrustedCertsKeystore() throws OpenAS2Exception {
+        if (cachedJavaKeyStore != null) {
+            return cachedJavaKeyStore;
+        }
+
         File file = new File("jssecacerts");
         if (!file.isFile()) {
             char SEP = File.separatorChar;
@@ -587,7 +663,13 @@ public class HTTPUtil {
                 file = new File(dir, "cacerts");
             }
         }
-        return file;
+        try (InputStream in = new FileInputStream(file)) {
+            cachedJavaKeyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+            cachedJavaKeyStore.load(in, "changeit".toCharArray());
+        } catch (Exception e) {
+            throw new OpenAS2Exception("failed to load Java keystore file: " + file.getAbsolutePath(), e);
+        }
+        return cachedJavaKeyStore;
     }
 
     public static String getParamsString(Map<String, String> params) throws UnsupportedEncodingException {
@@ -615,76 +697,6 @@ public class HTTPUtil {
             return NetworkInterface.getByInetAddress(addr) != null;
         } catch (SocketException e) {
             return false;
-        }
-    }
-
-    /**
-     * @param url
-     * @param output
-     * @param input
-     * @param useCaches
-     * @param requestMethod
-     * @return
-     * @throws OpenAS2Exception
-     * @deprecated Use post method to send messages
-     */
-    public static HttpURLConnection getConnection(String url, boolean output, boolean input, boolean useCaches, String requestMethod) throws OpenAS2Exception {
-        if (url == null) {
-            throw new OpenAS2Exception("HTTP getConnection method received empty URL string.");
-        }
-        try {
-            initializeProxyAuthenticator();
-            HttpURLConnection conn;
-            URL urlObj = new URL(url);
-            if (urlObj.getProtocol().equalsIgnoreCase("https")) {
-                HttpsURLConnection connS = (HttpsURLConnection) urlObj.openConnection(getProxy("https"));
-                String selfSignedCN = System.getProperty("org.openas2.cert.TrustSelfSignedCN");
-                if (selfSignedCN != null) {
-                    File file = new File("jssecacerts");
-                    if (file.isFile() == false) {
-                        char SEP = File.separatorChar;
-                        File dir = new File(System.getProperty("java.home") + SEP + "lib" + SEP + "security");
-                        /* Check if this is a JDK home */
-                        if (!dir.isDirectory()) {
-                            dir = new File(System.getProperty("java.home") + SEP + "jre" + SEP + "lib" + SEP + "security");
-                        }
-                        if (!dir.isDirectory()) {
-                            throw new OpenAS2Exception("The JSSE folder could not be identified. Please check that JSSE is installed.");
-                        }
-                        file = new File(dir, "jssecacerts");
-                        if (file.isFile() == false) {
-                            file = new File(dir, "cacerts");
-                        }
-                    }
-                    InputStream in = new FileInputStream(file);
-                    try {
-                        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
-                        ks.load(in, "changeit".toCharArray());
-                        in.close();
-                        SSLContext context = SSLContext.getInstance("TLS");
-                        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                        tmf.init(ks);
-                        X509TrustManager defaultTrustManager = (X509TrustManager) tmf.getTrustManagers()[0];
-                        SelfSignedTrustManager tm = new SelfSignedTrustManager(defaultTrustManager);
-                        tm.setTrustCN(selfSignedCN);
-                        context.init(null, new TrustManager[]{tm}, null);
-                        connS.setSSLSocketFactory(context.getSocketFactory());
-                    } catch (Exception e) {
-                        throw new OpenAS2Exception("Self-signed certificate URL connection failed connecting to : " + url, e);
-                    }
-                }
-                conn = connS;
-            } else {
-                conn = (HttpURLConnection) urlObj.openConnection(getProxy("http"));
-            }
-            conn.setDoOutput(output);
-            conn.setDoInput(input);
-            conn.setUseCaches(useCaches);
-            conn.setRequestMethod(requestMethod);
-
-            return conn;
-        } catch (IOException ioe) {
-            throw new WrappedException("URL connection failed connecting to: " + url, ioe);
         }
     }
 
@@ -721,50 +733,6 @@ public class HTTPUtil {
 
         SystemDefaultRoutePlanner routePlanner = new SystemDefaultRoutePlanner(null);
         builder.setRoutePlanner(routePlanner);
-    }
-
-    /**
-     * @param protocol
-     * @return
-     * @throws OpenAS2Exception
-     * @deprecated - use post method to send messages
-     */
-    private static Proxy getProxy(String protocol) throws OpenAS2Exception {
-        String proxyHost = Properties.getProperty(protocol + ".proxyHost", null);
-        if (proxyHost == null) {
-            proxyHost = System.getProperty(protocol + ".proxyHost");
-        }
-        if (proxyHost == null) {
-            return Proxy.NO_PROXY;
-        }
-        String proxyPort = Properties.getProperty(protocol + ".proxyPort", null);
-        if (proxyPort == null) {
-            proxyPort = System.getProperty(protocol + ".proxyPort");
-        }
-        if (proxyPort == null) {
-            throw new OpenAS2Exception("Missing PROXY port since Proxy host is set");
-        }
-        int port = Integer.parseInt(proxyPort);
-        return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, port));
-
-    }
-
-    /**
-     * @deprecated - use post method to send messages
-     */
-    private static void initializeProxyAuthenticator() {
-        String proxyUser1 = Properties.getProperty("http.proxyUser", null);
-        final String proxyUser = proxyUser1 == null ? System.getProperty("http.proxyUser") : proxyUser1;
-        String proxyPwd1 = Properties.getProperty("http.proxyPassword", null);
-        final String proxyPassword = proxyPwd1 == null ? System.getProperty("http.proxyPassword") : proxyPwd1;
-
-        if (proxyUser != null && proxyPassword != null) {
-            Authenticator.setDefault(new Authenticator() {
-                public PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(proxyUser, proxyPassword.toCharArray());
-                }
-            });
-        }
     }
 
     // Copy headers from an Http connection to an InternetHeaders object
@@ -810,6 +778,12 @@ public class HTTPUtil {
 
         private final X509TrustManager tm;
         private String[] trustCN = null;
+        private KeyStore customTrustKeyStore = null;
+        private boolean isExtendedSelfsignedTrustCheck = false;
+
+        public void setCustomSelfSignedHandling(boolean isExtendedSelfsignedTrustCheck) {
+            this.isExtendedSelfsignedTrustCheck = isExtendedSelfsignedTrustCheck;
+        }
 
         SelfSignedTrustManager(X509TrustManager tm) {
             this.tm = tm;
@@ -824,21 +798,70 @@ public class HTTPUtil {
         }
 
         public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+
             if (chain.length == 1) {
-                // Only ignore the check for self signed certs where CN (Canonical Name) matches
-                String dn = chain[0].getIssuerX500Principal().getName();
-                for (int i = 0; i < trustCN.length; i++) {
-                    if (dn.contains("CN=" + trustCN[i])) {
+                // check if certificate is in the truststore or is cached - IF SSL_KEYSTORE_PATH && SSL_KEYSTORE PASSWORD ARE SET
+                if(this.isExtendedSelfsignedTrustCheck) {
+
+                    String fingerprint = getCertificateFingerprint(chain[0]);
+
+                    // Check if fingerprint is already cached to avoid re-opening keystore
+                    if (cachedFingerprints.contains(fingerprint)) {
+                        LOG.info("Certificate validation passed (cached) for " + chain[0].getSubjectX500Principal().getName());
                         return;
+                    }
+            
+                    // Proceed with custom keystore handling if not cached
+                    if (isCertificateInCustomKeystore(chain[0], fingerprint)) {
+                        LOG.info("Custom self-signed certificate validation passed for " + chain[0].getSubjectX500Principal().getName());
+                        return;
+                    }
+                } else {
+                    // Only ignore the check for self signed certs where CN (Canonical Name) matches - DEFAULT BEHAVIOUR
+                    String dn = chain[0].getIssuerX500Principal().getName();
+                    for (int i = 0; i < trustCN.length; i++) {
+                        if (dn.contains("CN=" + trustCN[i])) {
+                            return;
+                        }
                     }
                 }
             }
             tm.checkServerTrusted(chain, authType);
         }
 
+        private String getCertificateFingerprint(X509Certificate cert) throws CertificateException {
+            try {
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] fingerprintBytes = md.digest(cert.getEncoded());
+                StringBuilder sb = new StringBuilder();
+                for (byte b : fingerprintBytes) {
+                    sb.append(String.format("%02X", b));
+                }
+                return sb.toString();
+            } catch (NoSuchAlgorithmException | CertificateEncodingException e) {
+                throw new CertificateException("Failed to generate fingerprint for certificate", e);
+            }
+        }
+
+        private boolean isCertificateInCustomKeystore(X509Certificate cert, String fingerprint) {
+            try {
+                String alias = this.customTrustKeyStore.getCertificateAlias(cert);
+                if (alias != null) {
+                    cachedFingerprints.add(fingerprint); // Cache the fingerprint
+                    return true;
+                }
+            } catch (Exception e) {
+                LOG.error("Failed to verify certificate in custom keystore: " + e.getMessage(), e);
+            }
+            return false;
+        }
+
         public void setTrustCN(String trustCN) {
             this.trustCN = trustCN.split(",");
         }
 
+        public void setCustomTrustKeyStore(KeyStore trustKeyStore) {
+            this.customTrustKeyStore = trustKeyStore;
+        }
     }
 }
