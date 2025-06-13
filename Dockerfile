@@ -22,10 +22,15 @@ FROM eclipse-temurin:11.0.22_7-jre-jammy
 ENV OPENAS2_BASE=/opt/openas2
 ENV OPENAS2_HOME=/opt/openas2
 ENV OPENAS2_TMPDIR=/opt/openas2/temp
-COPY --from=builder /usr/src/openas2/Runtime/bin ${OPENAS2_BASE}/bin
-COPY --from=builder /usr/src/openas2/Runtime/lib ${OPENAS2_BASE}/lib
-COPY --from=builder /usr/src/openas2/Runtime/resources ${OPENAS2_BASE}/resources
-COPY --from=builder /usr/src/openas2/Runtime/config_template ${OPENAS2_HOME}/config_template
-RUN mkdir ${OPENAS2_BASE}/config
+RUN groupadd  openas2 -g 5001  && \
+    groupadd  as2data -g 10001  && \
+    useradd -m -d /opt/openas2 -u 5001 -g openas2 -G as2data openas2
+COPY --chown=openas2:openas2 --from=builder /usr/src/openas2/Runtime/bin ${OPENAS2_BASE}/bin
+COPY --chown=openas2:openas2 --from=builder /usr/src/openas2/Runtime/lib ${OPENAS2_BASE}/lib
+COPY --chown=openas2:openas2 --from=builder /usr/src/openas2/Runtime/resources ${OPENAS2_BASE}/resources
+COPY --chown=openas2:openas2 --from=builder /usr/src/openas2/Runtime/config_template ${OPENAS2_HOME}/config_template
+RUN mkdir ${OPENAS2_BASE}/config ${OPENAS2_BASE}/logs ${OPENAS2_BASE}/data
+RUN chown openas2:openas2 ${OPENAS2_BASE}/config ${OPENAS2_BASE}/logs ${OPENAS2_BASE}/data
 WORKDIR $OPENAS2_HOME
+USER openas2
 ENTRYPOINT ${OPENAS2_BASE}/bin/start-container.sh
